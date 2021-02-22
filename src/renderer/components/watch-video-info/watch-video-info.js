@@ -338,9 +338,151 @@ export default Vue.extend({
       }
     },
 
-    handleDownloadLink: function (url) {
-      const shell = require('electron').shell
-      shell.openExternal(url)
+  handleDownloadLink: function (url) {
+      const videoData = {
+        title: this.title,
+        author: this.channelName,
+        type: 'video'
+      }
+      const title = this.escapeRegExpr(videoData.title)
+      const author = this.escapeRegExpr(videoData.author)
+      const fs = require('fs')
+      const homedir = require('os').homedir();
+      const videodir = homedir.concat("/Videos")
+      const audiodir = homedir.concat("/Music")
+      const audioext = "mp3"
+      const webaext = "weba"
+      const mp4ext = "mp4"
+      const webmext = "webm"
+
+      if (url.includes("mime=video")) {
+        const audioLinkToMerge = this.downloadLinkValues[`${Object.getOwnPropertyNames(this.downloadLinkValues).length - 5}`]
+        const audioToMerge = videodir.concat(`/${author}/tm-${title}.${audioext}`)
+        let videoToMerge = ''
+        let finalVideoFile = ''
+
+        if (url.includes("webm")) {
+          videoToMerge = videodir.concat(`/${author}/tm-${title}.${webmext}`)
+          finalVideoFile = videodir.concat(`/${author}/${title}.${webmext}`)
+        } else if (url.includes("mp4")) {
+          videoToMerge = videodir.concat(`/${author}/tm-${title}.${mp4ext}`)
+          finalVideoFile = videodir.concat(`/${author}/${title}.${mp4ext}`)
+        }
+        this.downloadUrl(audioLinkToMerge, audioToMerge).then(err => {
+          if (err) throw err;
+          this.downloadUrl(url, videoToMerge).then(err => {
+            if (err) throw err;
+            this.mergeAudio(videoToMerge, audioToMerge, finalVideoFile).then(err => {
+              try {
+                fs.unlink(videoToMerge, err => {
+                  if (err) throw err;
+                  console.log(`${videoToMerge} was deleted`)
+                })
+                fs.unlink(audioToMerge, err => {
+                  if (err) throw err;
+                  console.log(`${audioToMerge} was deleted`)
+                })
+                this.showToast({
+                  message: this.$t(`${title} finished downloading.`)
+                })
+              } catch (err) {
+                console.error(err)
+              }
+            })
+          })
+        })
+      } else if (url.includes("mime=audio")) {
+        const webaAudioFile = audiodir.concat(`/${author}/${title}.${webaext}`)
+        const finalAudioFile = audiodir.concat(`/${author}/${title}.${audioext}`)
+        this.downloadUrl(url, webaAudioFile).then(err => {
+          if (err) throw err;
+          this.fixMp3Audio(webaAudioFile, finalAudioFile).then(err => {
+            if (err) throw err;
+            try {
+              fs.unlink(webaAudioFile, err => {
+                if (err) throw err;
+                console.log(`${webaAudioFile} was deleted`)
+              })
+              this.showToast({
+                message: this.$t(`${title} finished downloading.`)
+              })
+            } catch (err) {
+              console.error(err)
+            }
+          })
+        })
+      }
+    },
+
+    escapeRegExpr: function (name) {
+      return name.replace(/[^A-Z0-9\.\\\/\s\-]+/ig, '')
+    },
+
+    downloadUrl: async function (url, savefile) {
+      const { spawn } = require("child_process")
+      let dl = spawn("youtube-dl", ["-o", `${savefile}`, `${url}`])
+
+      for await (const chunk of dl.stdout) {
+        console.log('stdout chunk: ' + chunk);
+      }
+
+      const exitCode = await new Promise((resolve, reject) => {
+        dl.on('close', resolve);
+      });
+
+      if (exitCode) {
+        throw new Error(`subprocess error exit ${exitCode}, ${error}`)
+      }
+      return
+    },
+
+    fixMp3Audio: async function (webaAudio, output) {
+      const { spawn } = require("child_process")
+
+      let fx = spawn("ffmpeg", ["-y", "-i", `${webaAudio}`, "-vn", "-ab",
+        "128k", "-ar", "44100", `${output}`])
+
+      for await (const chunk of fx.stdout) {
+        console.log('stdout chunk: ' + chunk);
+      }
+
+      const exitCode = await new Promise((resolve, reject) => {
+        fx.on('close', resolve);
+      });
+
+      if (exitCode) {
+        throw new Error(`subprocess error exit ${exitCode}, ${error}`)
+      }
+      return
+    },
+
+    mergeAudio: async function (video, audio, output) {
+      const { spawn } = require("child_process")
+      let merge = ''
+
+      if (video.includes('.mp4')) {
+        merge = spawn("ffmpeg", ["-y", "-i", `${video}`, "-i",
+          `${audio}`, "-c:v", "copy",
+          "-c:a", "aac", `${output}`])
+      } else if (video.includes('.webm')) {
+        merge = spawn("ffmpeg", ["-y", "-i", `${video}`, "-i",
+          `${audio}`, "-c:v", "copy",
+          "-c:a", "libvorbis", "-strict", "experimental", `${output}`])
+      }
+
+      for await (const chunk of merge.stdout) {
+        console.log('stdout chunk: ' + chunk);
+      }
+
+      const exitCode = await new Promise((resolve, reject) => {
+        merge.on('close', resolve);
+      });
+
+      if (exitCode) {
+        throw new Error(`subprocess error exit ${exitCode}, ${error}`)
+      }
+      return
+
     },
 
     addToPlaylist: function () {
